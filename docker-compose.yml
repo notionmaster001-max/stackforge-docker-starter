@@ -1,0 +1,107 @@
+# StackForge™ — Master Production Multi-Service Infrastructure
+# Notion Master Studio © 2026
+
+services:
+  # Edge Gateway & Automated SSL
+  caddy:
+    image: caddy:2.8-alpine
+    container_name: stackforge_caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./config/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - stackforge_network
+
+  # Core Primary Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: stackforge_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-stackforge_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_this_secure_pw_2026}
+      POSTGRES_DB: ${POSTGRES_DB:-stackforge_prod}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "127.0.0.1:5432:5432"
+    networks:
+      - stackforge_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-stackforge_admin} -d ${POSTGRES_DB:-stackforge_prod}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # In-Memory Cache & Message Broker
+  redis:
+    image: redis:7.2-alpine
+    container_name: stackforge_redis
+    restart: unless-stopped
+    command: redis-server --requirepass ${REDIS_PASSWORD:-change_redis_pw_2026} --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "127.0.0.1:6379:6379"
+    networks:
+      - stackforge_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-change_redis_pw_2026}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Self-Hosted Workflow Engine (n8n)
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    container_name: stackforge_n8n
+    restart: unless-stopped
+    environment:
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=postgres
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_DATABASE=${POSTGRES_DB:-stackforge_prod}
+      - DB_POSTGRESDB_USER=${POSTGRES_USER:-stackforge_admin}
+      - DB_POSTGRESDB_PASSWORD=${POSTGRES_PASSWORD:-change_this_secure_pw_2026}
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY:-n8n_secure_vault_key_2026}
+      - WEBHOOK_URL=https://automation.${DOMAIN:-localhost}
+    volumes:
+      - n8n_data:/home/node/.n8n
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - stackforge_network
+
+  # Self-Hosted Private AI Workspace (Open WebUI + Ollama Gateway)
+  open_webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: stackforge_webui
+    restart: unless-stopped
+    environment:
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+      - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY:-webui_secret_super_key_2026}
+    volumes:
+      - webui_data:/app/backend/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - stackforge_network
+
+volumes:
+  caddy_data:
+  caddy_config:
+  postgres_data:
+  redis_data:
+  n8n_data:
+  webui_data:
+
+networks:
+  stackforge_network:
+    driver: bridge
